@@ -22,9 +22,10 @@ const OUTCOME_STYLES: Record<
 
 interface MeetingCardProps {
   meeting: HubSpotMeeting;
+  aeName?: string;
 }
 
-export default function MeetingCard({ meeting }: MeetingCardProps) {
+export default function MeetingCard({ meeting, aeName }: MeetingCardProps) {
   const { contact, company, deal, startTime, outcome } = meeting;
 
   const contactName =
@@ -55,13 +56,20 @@ export default function MeetingCard({ meeting }: MeetingCardProps) {
             </p>
           </div>
 
-          {outcomeStyle && (
-            <span
-              className={`shrink-0 rounded-[100px] px-3 py-1 text-xs font-semibold ${outcomeStyle.className}`}
-            >
-              {outcomeStyle.label}
-            </span>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {aeName && (
+              <span className="text-[11px] font-semibold uppercase tracking-[1.5px] text-[#10BD91]">
+                {aeName}
+              </span>
+            )}
+            {outcomeStyle && (
+              <span
+                className={`rounded-[100px] px-3 py-1 text-xs font-semibold ${outcomeStyle.className}`}
+              >
+                {outcomeStyle.label}
+              </span>
+            )}
+          </div>
         </div>
 
         {deal?.dealStage && (

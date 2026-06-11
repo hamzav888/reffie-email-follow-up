@@ -1,29 +1,54 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import { fetchMeetings, HubSpotMeeting } from "@/lib/hubspot";
+import { fetchMeetings, fetchAllMeetings, HubSpotMeeting } from "@/lib/hubspot";
 import SignOutButton from "@/components/SignOutButton";
 import RefreshButton from "@/components/RefreshButton";
 import MeetingCard from "@/components/MeetingCard";
+import MeetingsTabs from "@/components/MeetingsTabs";
 
-export default async function MeetingsPage() {
+export default async function MeetingsPage({
+  searchParams,
+}: {
+  searchParams: { view?: string };
+}) {
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
+
+  const userIsAdmin = session.user.isAdmin ?? false;
+  const rawView = searchParams?.view;
+
+  if (rawView === "admin" && !userIsAdmin) {
+    redirect("/meetings");
+  }
+
+  const currentView: "mine" | "admin" =
+    rawView === "admin" && userIsAdmin ? "admin" : "mine";
 
   const ownerId = session.user.hubspotOwnerId;
 
   let meetings: HubSpotMeeting[] = [];
   let error: string | null = null;
 
-  if (ownerId) {
+  if (currentView === "admin") {
+    try {
+      meetings = await fetchAllMeetings();
+    } catch {
+      error = "Couldn't load meetings. Check your connection.";
+    }
+  } else if (ownerId) {
     try {
       meetings = await fetchMeetings(ownerId);
     } catch {
       error = "Couldn't load meetings. Check your connection.";
     }
-  } else {
-    error = "Your account is not mapped to a HubSpot owner. Contact your admin.";
   }
+  // ownerId is null (Hamza on My Meetings tab) → meetings stays [] → shows empty state
+
+  const subhead =
+    currentView === "admin"
+      ? "All meetings · last 7 days"
+      : "Your meetings from the last 7 days";
 
   return (
     <div className="min-h-screen bg-[#FAF8F5]">
@@ -47,10 +72,10 @@ export default async function MeetingsPage() {
       </header>
 
       <main className="max-w-3xl mx-auto px-8 py-6">
+        <MeetingsTabs isAdmin={userIsAdmin} currentView={currentView} />
+
         <div className="flex items-center justify-between mb-6">
-          <p className="text-[#6B6B6B] text-sm">
-            Your meetings from the last 7 days
-          </p>
+          <p className="text-[#6B6B6B] text-sm">{subhead}</p>
           <RefreshButton />
         </div>
 
@@ -83,7 +108,11 @@ export default async function MeetingsPage() {
         {!error && meetings.length > 0 && (
           <div className="flex flex-col gap-3">
             {meetings.map((meeting) => (
-              <MeetingCard key={meeting.id} meeting={meeting} />
+              <MeetingCard
+                key={meeting.id}
+                meeting={meeting}
+                aeName={meeting.aeName}
+              />
             ))}
           </div>
         )}

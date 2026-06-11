@@ -11,6 +11,11 @@ export async function GET(
   const prospectEmail = searchParams.get("prospectEmail");
   const meetingStartTime = searchParams.get("meetingStartTime");
 
+  console.log("[Day.ai DEBUG] /summary route called", {
+    prospectEmail,
+    meetingStartTime,
+  });
+
   if (!prospectEmail || prospectEmail.trim() === "") {
     return NextResponse.json(
       { error: "prospectEmail is required" },

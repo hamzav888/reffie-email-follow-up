@@ -57,7 +57,14 @@ export interface HubSpotMeeting {
     dealName: string | null;
     dealStage: string | null;
   } | null;
+  aeName?: string;
 }
+
+const AE_OWNERS = [
+  { id: "164512018", name: "Ross Barton" },
+  { id: "162714273", name: "Preston Bryan" },
+  { id: "75767826", name: "Connie Lee" },
+];
 
 type RawObject = { id: string; properties: Record<string, string | null> };
 
@@ -128,18 +135,6 @@ export async function fetchMeetings(
 ): Promise<HubSpotMeeting[]> {
   if (process.env.TEST_MODE === "true") {
     return MOCK_MEETINGS;
-  }
-
-  if (hubspotOwnerId === "ALL") {
-    const allOwnerIds = ["164512018", "162714273", "75767826"];
-    const results = await Promise.all(allOwnerIds.map((id) => fetchMeetings(id)));
-    const combined = results.flat();
-    combined.sort((a, b) => {
-      const ta = a.startTime.includes("T") ? new Date(a.startTime).getTime() : Number(a.startTime);
-      const tb = b.startTime.includes("T") ? new Date(b.startTime).getTime() : Number(b.startTime);
-      return tb - ta;
-    });
-    return combined;
   }
 
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -253,6 +248,29 @@ export async function fetchMeetings(
         : null,
     };
   });
+}
+
+function sortByStartTime(meetings: HubSpotMeeting[]): HubSpotMeeting[] {
+  return meetings.slice().sort((a, b) => {
+    const ta = a.startTime.includes("T") ? new Date(a.startTime).getTime() : Number(a.startTime);
+    const tb = b.startTime.includes("T") ? new Date(b.startTime).getTime() : Number(b.startTime);
+    return tb - ta;
+  });
+}
+
+export async function fetchAllMeetings(): Promise<HubSpotMeeting[]> {
+  if (process.env.TEST_MODE === "true") {
+    return MOCK_MEETINGS.map((m) => ({ ...m, aeName: "Ross Barton" }));
+  }
+
+  const results = await Promise.all(
+    AE_OWNERS.map(async (ae) => {
+      const meetings = await fetchMeetings(ae.id);
+      return meetings.map((m) => ({ ...m, aeName: ae.name }));
+    })
+  );
+
+  return sortByStartTime(results.flat());
 }
 
 export async function patchMeetingOutcome(

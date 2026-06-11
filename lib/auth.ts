@@ -1,11 +1,17 @@
 import { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 
+export const ADMIN_EMAILS = ["hamza@reffie.me", "connie@reffie.me"];
+
+export function isAdmin(email: string): boolean {
+  return ADMIN_EMAILS.includes(email);
+}
+
 const OWNER_IDS: Record<string, string> = {
   "ross@reffie.me": "164512018",
   "preston@reffie.me": "162714273",
   "connie@reffie.me": "75767826",
-  "hamza@reffie.me": "ALL",
+  // hamza@reffie.me is intentionally absent — no real HubSpot owner ID
 };
 
 export const authOptions: NextAuthOptions = {
@@ -24,12 +30,14 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user?.email) {
         token.hubspotOwnerId = OWNER_IDS[user.email] ?? null;
+        token.isAdmin = isAdmin(user.email);
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
         session.user.hubspotOwnerId = token.hubspotOwnerId;
+        session.user.isAdmin = token.isAdmin;
       }
       return session;
     },
@@ -47,42 +55,6 @@ export const authOptions: NextAuthOptions = {
     signIn: "/login",
     error: "/login",
   },
-  cookies: {
-    sessionToken: {
-      name: "next-auth.session-token",
-      options: {
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-        secure: false,
-      },
-    },
-    callbackUrl: {
-      name: "next-auth.callback-url",
-      options: {
-        sameSite: "lax",
-        path: "/",
-        secure: false,
-      },
-    },
-    csrfToken: {
-      name: "next-auth.csrf-token",
-      options: {
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-        secure: false,
-      },
-    },
-    state: {
-      name: "next-auth.state",
-      options: {
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-        secure: false,
-        maxAge: 900,
-      },
-    },
-  },
+  // No custom cookies block — NextAuth reads NEXTAUTH_URL and sets secure cookies
+  // automatically: http:// → secure: false (dev), https:// → secure: true + __Secure- prefix (prod)
 };

@@ -63,6 +63,11 @@ export async function fetchMeetingSummary(
   prospectEmail: string,
   meetingStartTime: string
 ): Promise<string | null> {
+  console.log("[Day.ai DEBUG] fetchMeetingSummary called", {
+    prospectEmail,
+    meetingStartTime,
+  });
+
   if (process.env.TEST_MODE === "true") {
     if (prospectEmail === "sarah.chen@oakbrookapts.com") {
       return MOCK_DISCOVERY_SUMMARY;
@@ -80,6 +85,12 @@ export async function fetchMeetingSummary(
 
   // Step 1: Search for all recordings where this contact was an attendee
   const searchResult = await client.findMeetingsByAttendee(prospectEmail);
+
+  console.log("[Day.ai DEBUG] Search result", {
+    success: searchResult.success,
+    error: searchResult.error ?? null,
+    rawSnippet: searchResult.data?.content[0]?.text?.slice(0, 500) ?? null,
+  });
 
   if (!searchResult.success || !searchResult.data) {
     throw new Error(`Day.ai search failed: ${searchResult.error ?? "unknown"}`);
@@ -100,14 +111,15 @@ export async function fetchMeetingSummary(
     throw new Error("Failed to parse Day.ai meeting search results");
   }
 
-  // Debug: log all candidates so we can verify timestamp matching
+  console.log("[Day.ai DEBUG] Parsed meetings", { count: meetings.length });
+
   const candidates = meetings.map((m) => ({
     objectId: m.objectId,
     title: m.title ?? "(no title)",
     timestamp: getMeetingTimestamp(m)?.toISOString() ?? "unknown",
     createdAt: m.createdAt ?? "unknown",
   }));
-  console.log("[Day.ai] Timestamp match debug:", {
+  console.log("[Day.ai DEBUG] Timestamp match", {
     prospectEmail,
     targetTimestamp: targetDate.toISOString(),
     candidatesFound: candidates.length,
@@ -133,7 +145,7 @@ export async function fetchMeetingSummary(
     }
   }
 
-  console.log("[Day.ai] Selected:", {
+  console.log("[Day.ai DEBUG] Selected", {
     selected: bestMatch
       ? {
           objectId: bestMatch.objectId,
@@ -148,10 +160,76 @@ export async function fetchMeetingSummary(
     return null;
   }
 
-  // Step 3: Fetch the recording transcript/context
+  // Step 3a: Fetch AI-generated summary fields via search_objects (preferred)
+  // summaryLong/summaryShort/notes are pre-processed AI text — cleaner for email generation
+  // than a raw VTT transcript and avoids pagination entirely.
+  const summaryResult = await client.searchObjects(
+    [{ objectType: "native_meetingrecording", objectIds: [bestMatch.objectId] }],
+    {
+      propertiesToReturn: [
+        "summaryLong",
+        "summaryShort",
+        "notes",
+        "descriptionBullets",
+        "description",
+      ],
+    }
+  );
+
+  if (summaryResult.success && summaryResult.data) {
+    let summaryParsed: Record<string, unknown> = {};
+    try {
+      summaryParsed = JSON.parse(
+        summaryResult.data.content[0]?.text ?? "{}"
+      ) as Record<string, unknown>;
+    } catch {
+      // parse failure — fall through to Tier 2
+    }
+
+    type MeetingResultSet = { results?: Array<{ properties?: Record<string, unknown> }> };
+    const record = (summaryParsed.native_meetingrecording as MeetingResultSet | undefined)
+      ?.results?.[0];
+    const props = record?.properties ?? {};
+
+    const summaryLong = typeof props.summaryLong === "string" ? props.summaryLong.trim() : "";
+    const summaryShort = typeof props.summaryShort === "string" ? props.summaryShort.trim() : "";
+    const notes = typeof props.notes === "string" ? props.notes.trim() : "";
+    const description = typeof props.description === "string" ? props.description.trim() : "";
+    const bullets = Array.isArray(props.descriptionBullets)
+      ? (props.descriptionBullets as string[]).join("\n").trim()
+      : "";
+
+    const summary = summaryLong || summaryShort || notes || description || bullets || null;
+
+    const source = summaryLong
+      ? "summaryLong"
+      : summaryShort
+      ? "summaryShort"
+      : notes
+      ? "notes"
+      : description
+      ? "description"
+      : bullets
+      ? "descriptionBullets"
+      : null;
+
+    console.log("[Day.ai DEBUG] Summary fields result", {
+      source,
+      length: summary?.length ?? 0,
+    });
+
+    if (summary) return summary;
+  } else {
+    console.log("[Day.ai DEBUG] Summary fields fetch failed", {
+      error: summaryResult.error ?? null,
+    });
+  }
+
+  // Step 3b: Fallback — get_meeting_recording_context (VTT transcript)
+  // Used when Day.ai has not yet generated AI summaries for the recording.
   const contextResult = await client.mcpCallTool(
     "get_meeting_recording_context",
-    { objectId: bestMatch.objectId }
+    { meetingRecordingId: bestMatch.objectId }
   );
 
   if (!contextResult.success || !contextResult.data) {
@@ -168,7 +246,14 @@ export async function fetchMeetingSummary(
 
   const rawText = contextResult.data.content[0]?.text ?? "";
 
-  // Parse the response — it may be JSON with vttTranscript/sentences, or plain text
+  console.log("[Day.ai DEBUG] Context fetch result", {
+    success: contextResult.success,
+    error: contextResult.error ?? null,
+    rawLength: rawText.length,
+    rawSnippet: rawText.slice(0, 300),
+  });
+
+  // Parse the VTT/sentence response from get_meeting_recording_context
   let transcript = "";
   try {
     const parsed = JSON.parse(rawText) as {
