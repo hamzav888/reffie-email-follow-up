@@ -44,7 +44,7 @@ Association and property calls fail silently (return empty Map/array) so a parti
 | Variable | Purpose | Where used |
 |---|---|---|
 | `NEXTAUTH_URL` | Base URL for NextAuth callbacks | NextAuth internals |
-| `NEXTAUTH_SECRET` | JWT signing key | NextAuth + middleware |
+| `NEXTAUTH_SECRET` | JWT signing key | NextAuth internals |
 | `GOOGLE_CLIENT_ID` | Google OAuth app ID | `lib/auth.ts` |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth app secret | `lib/auth.ts` |
 | `HUBSPOT_PRIVATE_TOKEN` | HubSpot private app token | `lib/hubspot.ts` only |
@@ -78,7 +78,6 @@ To add a new AE: update `OWNER_IDS` in `lib/auth.ts`. The user must sign out and
 ```
 lib/auth.ts              NextAuth config, OWNER_IDS map, @reffie.me restriction
 lib/hubspot.ts           HubSpot API client (fetchMeetings + helpers)
-middleware.ts            Protects /meetings route with next-auth/middleware
 components/
   GoogleSignInButton.tsx  "use client" — signIn('google')
   SignOutButton.tsx        "use client" — signOut({ callbackUrl: '/login' })
@@ -86,7 +85,8 @@ components/
   MeetingCard.tsx          Presentational card for one meeting
 app/
   login/page.tsx          Login screen, reads ?error= searchParam
-  meetings/page.tsx       Protected meeting list (server component)
+  meetings/page.tsx       Protected meeting list (server component) — getServerSession at top
+  meetings/[id]/page.tsx  Meeting detail (server component) — getServerSession at top
   api/auth/[...nextauth]/route.ts  NextAuth GET + POST handler
 types/next-auth.d.ts     Augments Session and JWT with hubspotOwnerId
 ```
@@ -105,4 +105,15 @@ types/next-auth.d.ts     Augments Session and JWT with hubspotOwnerId
 
 **HubSpot v4 association `toObjectId` is a number.** Cast explicitly: `String(t.toObjectId)`. Treating it as a string without casting causes silent ID mismatches when building the lookup Map.
 
-**NextAuth middleware in production requires explicit `secureCookie: true`.** `next-auth/middleware` and `withAuth` both call `getToken` internally. `getToken` determines the cookie name by checking `req.url.startsWith("https:")` — but on Vercel's Edge Runtime, `req.url` is the internal `http://` URL even when the external request is `https://`. So `secureCookie` evaluates to `false`, and `getToken` looks for `next-auth.session-token` (no prefix) while NextAuth actually set `__Secure-next-auth.session-token` (prefixed). Token not found → middleware redirects to `/login`. The login page's `getServerSession()` runs in Node.js runtime, reads `NEXTAUTH_URL` from env, finds the `__Secure-` cookie correctly, and redirects back to `/meetings` — infinite loop. Fix: replace `withAuth` with explicit `getToken` in middleware and pass `secureCookie: process.env.NODE_ENV === "production"`. Do not rely on `req.url` scheme detection in Edge Runtime.
+**Do not use Edge Runtime middleware for auth protection.** On Vercel, the Edge Runtime sees `req.url` as the internal `http://` URL even for external `https://` requests. NextAuth's `getToken` determines the cookie name by checking `req.url.startsWith("https:")` — this evaluates to `false`, so it looks for `next-auth.session-token` (un-prefixed) while NextAuth actually set `__Secure-next-auth.session-token` (prefixed, since `NEXTAUTH_URL` is `https://`). Token not found → middleware redirects to `/login`. The login page's `getServerSession()` runs in Node.js runtime, reads `NEXTAUTH_URL` from env, finds the `__Secure-` cookie correctly, and redirects back to `/meetings` — infinite loop. This runtime disagreement caused redirect loops three times. The permanent fix: **no middleware for auth**. Both `app/meetings/page.tsx` and `app/meetings/[id]/page.tsx` call `getServerSession` as their first statement — this is the single source of truth. `getServerSession` in Node.js runtime reads `NEXTAUTH_URL` reliably and always targets the right cookie. Do not add `middleware.ts` back without understanding this constraint.
+
+**`redirect` callback `new URL(url)` must be wrapped in try-catch.** If the OAuth state cookie is lost (cookie dropped during the Google redirect roundtrip, or cookie size limit hit), NextAuth may pass an empty or malformed string as `url` to the redirect callback. `new URL("")` throws `TypeError`. The callback should be:
+```typescript
+async redirect({ url, baseUrl }) {
+  if (url.startsWith("/")) return `${baseUrl}${url}`;
+  try {
+    if (new URL(url).origin === baseUrl) return url;
+  } catch {}
+  return `${baseUrl}/meetings`;
+}
+```

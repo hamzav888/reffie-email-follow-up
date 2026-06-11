@@ -42,12 +42,12 @@ export const authOptions: NextAuthOptions = {
       return session;
     },
     async redirect({ url, baseUrl }) {
-      // After sign-in with no explicit callbackUrl, land on /meetings
-      if (url === baseUrl || url === `${baseUrl}/`) {
-        return `${baseUrl}/meetings`;
-      }
       if (url.startsWith("/")) return `${baseUrl}${url}`;
-      if (new URL(url).origin === baseUrl) return url;
+      try {
+        if (new URL(url).origin === baseUrl) return url;
+      } catch {
+        // url is not a valid absolute URL
+      }
       return `${baseUrl}/meetings`;
     },
   },
