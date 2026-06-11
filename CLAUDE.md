@@ -104,3 +104,5 @@ types/next-auth.d.ts     Augments Session and JWT with hubspotOwnerId
 **`router.refresh()` has no promise return.** You cannot `await router.refresh()`. Use `useTransition` — the `isPending` state from `startTransition` correctly tracks whether the server is still re-rendering after the refresh is triggered.
 
 **HubSpot v4 association `toObjectId` is a number.** Cast explicitly: `String(t.toObjectId)`. Treating it as a string without casting causes silent ID mismatches when building the lookup Map.
+
+**NextAuth middleware must pass `secret` explicitly in production.** The bare re-export `export { default } from "next-auth/middleware"` works locally but causes an `ERR_TOO_MANY_REDIRECTS` loop on Vercel. In Edge Runtime, NextAuth's internal `getToken()` cannot reliably read `NEXTAUTH_SECRET` from `process.env`, so it returns `null` and the middleware redirects every `/meetings` request to `/login`. The login page's `getServerSession()` (Node.js runtime) reads the session fine and redirects back — infinite loop. Fix: `export default withAuth({ secret: process.env.NEXTAUTH_SECRET })`.
